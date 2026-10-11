@@ -26,10 +26,10 @@ type Changes = {
   misplacedFiles: string[];
 };
 
-const REPO_RE = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
+export const REPO_RE = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
 
 // Domains that belong in `links`, not `website`
-const REGISTRY_DOMAINS = new Set([
+export const REGISTRY_DOMAINS = new Set([
   "npmjs.com",
   "pypi.org",
   "marketplace.visualstudio.com",
@@ -70,7 +70,7 @@ function isMisplacedYaml(file: string): boolean {
   return !CONFIG_YAML.has(basename(file));
 }
 
-const MAX_LINKS = 5;
+export const MAX_LINKS = 5;
 
 /** Run a git command and return its output lines (forward-slashed), or [] on empty. */
 function gitLines(args: string): string[] {
