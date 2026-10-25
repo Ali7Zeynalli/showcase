@@ -1,7 +1,7 @@
 import { execSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import yaml from "js-yaml";
+import * as yaml from "js-yaml";
 
 type ProjectYaml = {
   repo?: string;
@@ -23,12 +23,13 @@ type Changes = {
   modifiedFiles: string[];
   deletedFiles: string[];
   invalidFiles: string[];
+  misplacedFiles: string[];
 };
 
-const REPO_RE = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
+export const REPO_RE = /^[a-zA-Z0-9._-]+\/[a-zA-Z0-9._-]+$/;
 
 // Domains that belong in `links`, not `website`
-const REGISTRY_DOMAINS = new Set([
+export const REGISTRY_DOMAINS = new Set([
   "npmjs.com",
   "pypi.org",
   "marketplace.visualstudio.com",
@@ -58,12 +59,57 @@ const REGISTRY_DOMAINS = new Set([
 
 const ALLOWED_FIELDS = new Set(["repo", "submittedBy", "banner", "links", "website"]);
 
-const MAX_LINKS = 5;
+// YAML files that legitimately live outside `projects/` (repo config, not submissions).
+const CONFIG_YAML = new Set(["pnpm-lock.yaml", "pnpm-workspace.yaml"]);
+
+/** True for a YAML file that is neither a project submission nor known repo config. */
+function isMisplacedYaml(file: string): boolean {
+  if (!file.endsWith(".yaml") && !file.endsWith(".yml")) return false;
+  if (file.startsWith("projects/")) return false;
+  if (file.startsWith(".github/")) return false;
+  return !CONFIG_YAML.has(basename(file));
+}
+
+export const MAX_LINKS = 5;
 
 /** Run a git command and return its output lines (forward-slashed), or [] on empty. */
 function gitLines(args: string): string[] {
   const out = execSync(`git ${args}`, { encoding: "utf8" }).trim();
   return out ? out.split("\n").map((f) => f.replaceAll("\\", "/")) : [];
+}
+
+export function resolveGitHubToken(): string | null {
+  const envToken = process.env.GITHUB_TOKEN?.trim();
+  if (envToken) return envToken;
+  try {
+    const token = execSync("gh auth token", { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    if (token) return token;
+  } catch {
+    // gh not installed or not logged in: no token available.
+  }
+  return null;
+}
+
+/** `unknown` means rate limit/network error — callers must never delete on it. */
+export type RepoStatus = "ok" | "missing" | "private" | "unknown";
+
+export async function checkRepoStatus(repo: string, token: string): Promise<RepoStatus> {
+  try {
+    const res = await fetch(`https://api.github.com/repos/${repo}`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "User-Agent": "AzGitCommunity-Showcase",
+      },
+    });
+    if (res.status === 404) return "missing";
+    if (res.ok) {
+      const data = (await res.json()) as { private: boolean };
+      return data.private ? "private" : "ok";
+    }
+    return "unknown";
+  } catch {
+    return "unknown";
+  }
 }
 
 /**
@@ -84,6 +130,7 @@ function detectChanges(): Changes {
         modifiedFiles: yamlOnly(gitLines(`diff --name-only --diff-filter=CMRT ${range} -- projects/`)),
         deletedFiles: yamlOnly(gitLines(`diff --name-only --diff-filter=D ${range} -- projects/`)),
         invalidFiles: nonYamlInProjects(gitLines(`diff --name-only --diff-filter=ACMRT ${range} -- projects/`)),
+        misplacedFiles: gitLines(`diff --name-only --diff-filter=ACMRT ${range}`).filter(isMisplacedYaml),
       };
     }
 
@@ -93,18 +140,23 @@ function detectChanges(): Changes {
     const unstagedMod = gitLines("diff --name-only --diff-filter=CMRT -- projects/");
     const untracked = gitLines("ls-files --others --exclude-standard -- projects/");
 
+    const stagedAll = gitLines("diff --name-only --diff-filter=ACMRT --cached");
+    const unstagedAll = gitLines("diff --name-only --diff-filter=ACMRT");
+    const untrackedAll = gitLines("ls-files --others --exclude-standard");
+
     return {
       newFiles: yamlOnly([...new Set([...stagedNew, ...untracked])]),
       modifiedFiles: yamlOnly([...new Set([...stagedMod, ...unstagedMod])]),
       deletedFiles: yamlOnly(stagedDel),
       invalidFiles: nonYamlInProjects([...new Set([...stagedNew, ...stagedMod, ...untracked])]),
+      misplacedFiles: [...new Set([...stagedAll, ...unstagedAll, ...untrackedAll])].filter(isMisplacedYaml),
     };
   } catch {
     // Not a git repo or git failed: validate every project file.
     const all = readdirSync("projects")
       .filter((f) => f.endsWith(".yaml"))
       .map((f) => join("projects", f).replaceAll("\\", "/"));
-    return { newFiles: [], modifiedFiles: all, deletedFiles: [], invalidFiles: [] };
+    return { newFiles: [], modifiedFiles: all, deletedFiles: [], invalidFiles: [], misplacedFiles: [] };
   }
 }
 
@@ -141,9 +193,9 @@ function validateLinks(links: unknown, errors: string[]) {
  * per-file report, and throws when any file is invalid (which fails the check).
  */
 export async function validate(): Promise<void> {
-  const { newFiles, modifiedFiles, deletedFiles, invalidFiles } = detectChanges();
+  const { newFiles, modifiedFiles, deletedFiles, invalidFiles, misplacedFiles } = detectChanges();
   const filesToValidate = [...newFiles, ...modifiedFiles];
-  const allChangedFiles = [...filesToValidate, ...deletedFiles, ...invalidFiles];
+  const allChangedFiles = [...filesToValidate, ...deletedFiles, ...invalidFiles, ...misplacedFiles];
 
   if (allChangedFiles.length === 0) {
     console.log("No changed project files to validate.");
@@ -167,6 +219,16 @@ export async function validate(): Promise<void> {
 
   let hasErrors = false;
   const results: ValidationResult[] = [];
+
+  // Reject project YAML files placed outside the `projects/` directory.
+  for (const filePath of misplacedFiles) {
+    results.push({
+      file: filePath,
+      status: "new",
+      errors: [`Project files must live in the \`projects/\` directory, move \`${filePath}\` into \`projects/\``],
+    });
+    hasErrors = true;
+  }
 
   // Reject non-YAML files in projects/
   for (const filePath of invalidFiles) {
@@ -292,7 +354,14 @@ export async function validate(): Promise<void> {
   }
 
   // Check repos exist and are public on GitHub (only for new/modified without errors).
-  const token = process.env.GITHUB_TOKEN;
+  const token = resolveGitHubToken();
+  if (!token) {
+    console.log(
+      "\nNote: skipping the GitHub repo existence/visibility check (no GitHub credentials found).\n" +
+        "      Install the GitHub CLI and run `gh auth login`, or set GITHUB_TOKEN, to enable it.\n" +
+        "      This check always runs in CI, so a missing or private repo is still caught there.",
+    );
+  }
   if (token) {
     for (const result of results) {
       if (result.errors.length > 0 || result.status === "deleted") continue;
@@ -301,26 +370,15 @@ export async function validate(): Promise<void> {
       const data = yaml.load(readFileSync(filePath, "utf8")) as ProjectYaml | null;
       if (!data?.repo) continue;
 
-      try {
-        const res = await fetch(`https://api.github.com/repos/${data.repo}`, {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "User-Agent": "AzGitCommunity-Showcase",
-          },
-        });
-        if (res.status === 404) {
-          result.errors.push(`Repository \`${data.repo}\` does not exist or is not public on GitHub`);
-          hasErrors = true;
-        } else if (res.ok) {
-          const repoData = (await res.json()) as { private: boolean };
-          if (repoData.private) {
-            result.errors.push(`Repository \`${data.repo}\` is private, only public repos are allowed`);
-            hasErrors = true;
-          }
-        }
-      } catch {
-        // Network error: skip check, do not fail the PR for this.
+      const status = await checkRepoStatus(data.repo, token);
+      if (status === "missing") {
+        result.errors.push(`Repository \`${data.repo}\` does not exist or is not public on GitHub`);
+        hasErrors = true;
+      } else if (status === "private") {
+        result.errors.push(`Repository \`${data.repo}\` is private, only public repos are allowed`);
+        hasErrors = true;
       }
+      // "unknown" (rate limit / network error): skip, do not fail the check.
     }
   }
 

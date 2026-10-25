@@ -4,16 +4,17 @@
   "description": "Azerbaijan GitHub Community — project showcase registry",
   "type": "module",
   "scripts": {
+    "add-project": "node scripts/add-project.ts",
     "check": "greenly",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check"
   },
   "devDependencies": {
     "@types/js-yaml": "4.0.9",
-    "@types/node": "24.13.3",
-    "greenly": "1.0.1",
-    "js-yaml": "5.2.2",
-    "oxfmt": "0.61.0",
+    "@types/node": "24.19.2",
+    "greenly": "1.2.0",
+    "js-yaml": "5.4.3",
+    "oxfmt": "0.72.0",
     "typescript": "7.0.2"
   },
   "engines": {

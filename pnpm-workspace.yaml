@@ -1,6 +1,5 @@
 saveExact: true
 engineStrict: true
 minimumReleaseAge: 1440
-trustPolicy: no-downgrade
-minimumReleaseAgeExclude:
-  - greenly@1.0.1
+minimumReleaseAgeExcludePrune: true
+trustPolicy: "no-downgrade"

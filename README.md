@@ -26,12 +26,19 @@ Browse the live showcase at [githubcommunity.az/showcase](https://githubcommunit
 
 1. **Fork** this repository and clone your fork
 2. Install dependencies with `pnpm install`
-3. Create a new file in the `projects/` directory named `{owner}-{repo}.yaml`
+3. Run **`pnpm add-project`** and answer the prompts. It checks your repo on GitHub and creates
+   `projects/{owner}-{repo}.yaml` for you.
+   <details>
+   <summary>Prefer to do it by hand?</summary>
+
+   Create a new file in the `projects/` directory named `{owner}-{repo}.yaml` and fill in the fields (see schema below).
    - Replace `{owner}` and `{repo}` with the GitHub owner and repository name
    - Example: for `octocat/hello-world`, the filename is `octocat-hello-world.yaml`
-4. Fill in the fields (see schema below)
-5. **Run `pnpm check` locally** and fix any reported errors before opening the PR
-6. Open a **pull request** against `main`
+
+   </details>
+
+4. **Run `pnpm check` locally** and fix any reported errors before opening the PR
+5. Open a **pull request** against `main`
 
 > Please run `pnpm check` locally before submitting your PR. It runs the same checks as CI
 > (formatting, type check, and project validation), so it is the fastest way to catch issues
